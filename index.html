@@ -63,66 +63,123 @@
           "function allowance(address owner, address spender) view returns (uint256)"
         ]
       };
+
       const coinbaseWallet = new CoinbaseWalletSDK({ appName: "SWITCH" });
       const ethereum = coinbaseWallet.makeWeb3Provider("https://sepolia.base.org", 84532);
       const provider = new ethers.BrowserProvider(ethereum);
       let userAddress, isConnected = false, isBusy = false;
+
       async function sync() {
         if (isBusy) return;
         try {
           const sw = new ethers.Contract(CONFIG.CONTRACT, CONFIG.ABI, provider);
-          const [color, pool, actor, exp] = await Promise.all([sw.currentColor(), sw.pot(), sw.lastActor(), sw.expiration()]);
+          const [color, pool, actor, exp] = await Promise.all([
+            sw.currentColor(), 
+            sw.pot(), 
+            sw.lastActor(), 
+            sw.expiration()
+          ]);
           document.getElementById("jackpot-pool").innerText = `$${ethers.formatUnits(pool, 6)}`;
           updateUI(actor, color, Number(exp) * 1000);
-        } catch (e) { console.error(e); }
+        } catch (e) { console.error("Sync Error:", e); }
       }
+
       function updateUI(actor, color, expMs) {
-        const now = Date.now(), statusEl = document.getElementById("status"), world = document.getElementById("world"), layer = document.getElementById("color-layer");
-        if (color === "VOID") { statusEl.innerText = "VOID"; world.classList.add("void-flash"); return; }
+        const now = Date.now();
+        const statusEl = document.getElementById("status");
+        const world = document.getElementById("world");
+        const layer = document.getElementById("color-layer");
+
+        if (color === "VOID") { 
+          statusEl.innerText = "VOID"; 
+          world.classList.add("void-flash"); 
+          return; 
+        }
+
         world.classList.remove("void-flash");
-        if (now > expMs || actor === "0x0000000000000000000000000000000000000000") { world.classList.add("is-off"); statusEl.innerText = "OFF"; layer.style.opacity = "0"; return; }
+
+        if (now > expMs || actor === "0x0000000000000000000000000000000000000000") { 
+          world.classList.add("is-off"); 
+          statusEl.innerText = "OFF"; 
+          layer.style.opacity = "0"; 
+          return; 
+        }
+
         world.classList.remove("is-off");
         document.documentElement.style.setProperty("--active-bg", color);
         layer.style.opacity = "1";
-        const hex = color.replace('#',''), r = parseInt(hex.substr(0,2),16), g = parseInt(hex.substr(2,2),16), b = parseInt(hex.substr(4,2),16);
-        const br = (r * 299 + g * 587 + b * 114) / 1000;
-        document.documentElement.style.setProperty("--text", br > 125 ? "#000" : "#fff");
+
+        // Logic for text contrast (Black vs White)
+        const hex = color.replace('#','');
+        const r = parseInt(hex.substr(0,2),16);
+        const g = parseInt(hex.substr(2,2),16);
+        const b = parseInt(hex.substr(4,2),16);
+        const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+        document.documentElement.style.setProperty("--text", brightness > 125 ? "#000" : "#fff");
+
         renderTimer(expMs);
       }
+
       function renderTimer(expMs) {
         const diff = expMs - Date.now();
-        if (diff <= 0 || isBusy) { sync(); return; }
-        const m = Math.floor(diff / 60000), s = Math.floor((diff % 60000) / 1000);
+        if (diff <= 0 || isBusy) { 
+          sync(); 
+          return; 
+        }
+        const m = Math.floor(diff / 60000);
+        const s = Math.floor((diff % 60000) / 1000);
         document.getElementById("status").innerText = `${m}:${s < 10 ? "0" : ""}${s}`;
         requestAnimationFrame(() => renderTimer(expMs));
       }
+
       document.getElementById("flicker").onclick = async () => {
         if (isBusy) return;
+
         if (!isConnected) {
-          const accts = await ethereum.request({ method: "eth_requestAccounts" });
-          userAddress = accts[0]; isConnected = true;
-          document.getElementById("wallet-status").innerText = "ACTIVE";
-          sync(); return;
+          try {
+            const accts = await ethereum.request({ method: "eth_requestAccounts" });
+            userAddress = accts[0]; 
+            isConnected = true;
+            document.getElementById("wallet-status").innerText = "ACTIVE";
+            sync(); 
+          } catch (e) { console.error("Login failed", e); }
+          return;
         }
-        isBusy = true; document.body.classList.add("is-rolling");
+
+        isBusy = true; 
+        document.body.classList.add("is-rolling");
+        
         try {
           const signer = await provider.getSigner();
           const usdc = new ethers.Contract(CONFIG.USDC, CONFIG.USDC_ABI, signer);
           const sw = new ethers.Contract(CONFIG.CONTRACT, CONFIG.ABI, signer);
+          
           const allowance = await usdc.allowance(userAddress, CONFIG.CONTRACT);
+          
           if (allowance < 1000000n) {
             document.getElementById("status").innerText = "AUTH";
-            await (await usdc.approve(CONFIG.CONTRACT, ethers.MaxUint256)).wait();
+            const approveTx = await usdc.approve(CONFIG.CONTRACT, ethers.MaxUint256);
+            await approveTx.wait();
           }
+
           document.getElementById("status").innerText = "FLICK";
-          const tx = await sw.flick(); await tx.wait();
-          isBusy = false; document.body.classList.remove("is-rolling"); sync();
+          const tx = await sw.flick(); 
+          await tx.wait();
+          
+          isBusy = false; 
+          document.body.classList.remove("is-rolling"); 
+          sync();
         } catch (e) {
-          isBusy = false; document.body.classList.remove("is-rolling");
-          document.getElementById("status").innerText = "FAIL"; setTimeout(sync, 2000);
+          isBusy = false; 
+          document.body.classList.remove("is-rolling");
+          document.getElementById("status").innerText = "FAIL"; 
+          setTimeout(sync, 2000);
         }
       };
-      setInterval(sync, 10000); window.onload = sync;
+
+      // Poll every 10 seconds for global state updates
+      setInterval(sync, 10000); 
+      window.onload = sync;
     </script>
   </body>
 </html>
