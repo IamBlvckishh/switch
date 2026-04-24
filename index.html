@@ -6,43 +6,43 @@
     <title>SWITCH</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
     <style>
-      :root { --text: #ffffff; --active-bg: #000; --dim-ratio: 1; }
+      :root { --text: #ffffff; --active-bg: #000; --dim-ratio: 0; }
       * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
       
-      /* Force single page, no scroll */
+      /* Force single-page, no-scroll mobile layout */
       html, body { 
         background-color: #000; 
         color: var(--text); 
         margin: 0; 
         padding: 0;
-        height: 100%; 
-        width: 100%;
+        height: 100vh; 
+        width: 100vw;
         display: flex; 
         flex-direction: column; 
         align-items: center; 
-        justify-content: space-between; /* Spreads content to edges */
+        justify-content: space-between; 
         font-family: "Courier New", monospace; 
         overflow: hidden; 
         user-select: none; 
       }
 
-      /* Corner Identity */
+      /* Connect Button Area */
       .identity-corner { 
         width: 100%;
-        padding: 20px 30px;
+        padding: 25px 30px;
         display: flex; 
         justify-content: flex-end;
         cursor: pointer; 
         z-index: 20; 
       }
 
-      /* Responsive Circle */
+      /* Responsive Central Switch */
       .switch-wrapper { 
-        width: 60vw; 
-        height: 60vw; 
-        max-width: 300px;
-        max-height: 300px;
-        border: 8px solid var(--text); 
+        width: 65vw; 
+        height: 65vw; 
+        max-width: 320px;
+        max-height: 320px;
+        border: 10px solid var(--text); 
         border-radius: 50%; 
         display: flex; 
         align-items: center; 
@@ -51,51 +51,52 @@
         transition: transform 0.1s; 
         z-index: 10; 
       }
-      .switch-wrapper:active { transform: scale(0.92); }
+      .switch-wrapper:active { transform: scale(0.95); }
       
-      svg { width: 60%; height: 60%; fill: none; stroke: var(--text); stroke-width: 70; stroke-linecap: round; }
+      svg { width: 65%; height: 65%; fill: none; stroke: var(--text); stroke-width: 70; stroke-linecap: round; }
 
-      .info { text-align: center; margin: 10px 0; }
+      .info { text-align: center; margin-top: 10px; }
       .status-text { 
-        font-size: clamp(4rem, 15vw, 7rem); /* Responsive text sizing */
+        font-size: clamp(4rem, 18vw, 6rem); 
         font-weight: 900; 
         margin: 0; 
-        letter-spacing: -4px; 
+        letter-spacing: -5px; 
         line-height: 0.8; 
       }
 
-      /* Dynamic Dimming Layer */
+      /* The Background Dimmer Layer */
       #color-layer { 
         position: fixed; 
         top: 0; left: 0; 
         width: 100%; height: 100%; 
         background-color: var(--active-bg); 
-        opacity: var(--dim-ratio); /* Controlled by JS */
+        opacity: var(--dim-ratio); 
         z-index: -1; 
+        transition: background-color 0.3s;
       }
 
-      /* Mobile-optimized Pot Section */
+      /* Pot Section - Pushed to Bottom for Mobile */
       .jackpot-corner { 
         width: 100%;
-        padding: 20px 30px;
-        border-left: none;
+        padding: 25px 30px;
         display: flex;
         flex-direction: column;
         align-items: flex-start;
+        z-index: 10;
       }
-      .jackpot-label { font-size: 0.6rem; opacity: 0.5; letter-spacing: 2px; }
-      .jackpot-value { font-size: clamp(1.5rem, 8vw, 2.5rem); font-weight: 900; letter-spacing: -1px; }
+      .jackpot-label { font-size: 0.5rem; opacity: 0.5; letter-spacing: 2px; }
+      .jackpot-value { font-size: clamp(2rem, 10vw, 2.5rem); font-weight: 900; letter-spacing: -1.5px; }
 
-      /* States */
-      body.is-off { --text: #444; }
+      /* Visual States */
+      body.is-off { --text: #555; }
       body.is-rolling svg { animation: glitch 0.15s infinite; }
       @keyframes glitch { 0% { transform: translate(2px, 1px); } 50% { transform: translate(-1px, -2px); opacity: 0.7; } 100% { transform: translate(0); } }
       .void-flash { animation: void-anim 0.5s steps(2) infinite; }
       @keyframes void-anim { from { filter: invert(1); } to { filter: invert(0); } }
 
-      /* Desktop nudge for the pot */
+      /* Desktop nudge if viewed on wide screens */
       @media (min-width: 768px) {
-        .jackpot-corner { width: auto; position: absolute; bottom: 30px; left: 30px; border-left: 2px solid var(--text); padding-left: 15px; }
+        .jackpot-corner { position: absolute; bottom: 30px; left: 30px; width: auto; border-left: 2px solid var(--text); padding-left: 15px; }
         .identity-corner { position: absolute; top: 30px; right: 30px; width: auto; }
       }
     </style>
@@ -129,14 +130,14 @@
 
     <script>
       const CONFIG = {
-        CONTRACT: "0x01937f9eCf5ef892b98C75b0a6650890BBE132Ce",
+        CONTRACT: "0xFF7E62c708da36206F0F0aba7B1A26e806b446A6",
         USDC: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        MAX_TIME: 600, // 10 minutes in seconds
         ABI: ["function flick() external", "function currentColor() view returns (string)", "function pot() view returns (uint256)", "function lastActor() view returns (address)", "function expiration() view returns (uint256)"],
         USDC_ABI: ["function approve(address spender, uint256 amount) returns (bool)", "function allowance(address owner, address spender) view returns (uint256)"]
       };
 
       let provider, signer, userAddress, isConnected = false, isBusy = false;
-      const MAX_TIME = 10 * 60 * 1000; // 10 minutes (matching your contract logic)
 
       async function sync() {
         if (isBusy) return;
@@ -146,7 +147,7 @@
           const [color, pool, actor, exp] = await Promise.all([sw.currentColor(), sw.pot(), sw.lastActor(), sw.expiration()]);
           document.getElementById("jackpot-pool").innerText = `$${ethers.formatUnits(pool, 6)}`;
           updateUI(actor, color, Number(exp) * 1000);
-        } catch (e) { console.error("Sync..."); }
+        } catch (e) { console.error("Sync Error"); }
       }
 
       function updateUI(actor, color, expMs) {
@@ -167,11 +168,11 @@
         world.classList.remove("is-off");
         document.documentElement.style.setProperty("--active-bg", color);
 
-        // Text Contrast Logic
+        // Brightness check for text contrast
         const hex = color.replace('#','');
         const r = parseInt(hex.substr(0,2),16), g = parseInt(hex.substr(2,2),16), b = parseInt(hex.substr(4,2),16);
-        const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-        document.documentElement.style.setProperty("--text", brightness > 125 ? "#000" : "#fff");
+        const br = (r * 299 + g * 587 + b * 114) / 1000;
+        document.documentElement.style.setProperty("--text", br > 125 ? "#000" : "#fff");
 
         renderTimer(expMs);
       }
@@ -180,9 +181,9 @@
         const diff = expMs - Date.now();
         if (diff <= 0 || isBusy) { sync(); return; }
 
-        // DIMMING LOGIC: Ratio of time left vs Max time
-        const ratio = Math.max(0, diff / MAX_TIME);
-        document.documentElement.style.setProperty("--dim-ratio", ratio.toFixed(3));
+        // Dimming Logic: Calculates ratio of time left vs Max (10 mins)
+        const ratio = Math.max(0, (diff / 1000) / CONFIG.MAX_TIME);
+        document.documentElement.style.setProperty("--dim-ratio", ratio.toFixed(4));
 
         const m = Math.floor(diff / 60000), s = Math.floor((diff % 60000) / 1000);
         document.getElementById("status").innerText = `${m}:${s < 10 ? "0" : ""}${s}`;
@@ -199,7 +200,7 @@
           isConnected = true;
           document.getElementById("wallet-status").innerText = "ACTIVE";
           sync();
-        } catch (e) { console.error(e); }
+        } catch (e) { console.error("Login failed"); }
       }
 
       document.getElementById("flicker").onclick = async () => {
