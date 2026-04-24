@@ -4,8 +4,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>SWITCH</title>
-    <script>var exports = {};</script>
-    <script src="https://unpkg.com/@coinbase/wallet-sdk@3.7.1/dist/index.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
     <style>
       :root { --dim: #1a1a1a; --text: #ffffff; --active-bg: #000; }
@@ -46,18 +44,17 @@
       <div style="font-size: 0.5rem; opacity: 0.5; letter-spacing: 2px">POT (USDC)</div>
       <div id="jackpot-pool" class="jackpot-value">$0.00</div>
     </div>
+
     <script>
       const CONFIG = {
-        CONTRACT: "0x01937f9eCf5ef892b98C75b0a6650890BBE132Ce",
+        CONTRACT: "0xFF7E62c708da36206F0F0aba7B1A26e806b446A6",
         USDC: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
         ABI: [
           "function flick() external",
           "function currentColor() view returns (string)",
           "function pot() view returns (uint256)",
           "function lastActor() view returns (address)",
-          "function expiration() view returns (uint256)",
-          "event Flicked(address indexed actor, string color, uint256 expiration, uint256 pot)",
-          "event VoidHit(address indexed winner, uint256 amount)"
+          "function expiration() view returns (uint256)"
         ],
         USDC_ABI: [
           "function approve(address spender, uint256 amount) returns (bool)",
@@ -65,17 +62,14 @@
         ]
       };
 
-      const coinbaseWallet = new CoinbaseWalletSDK({ appName: "SWITCH" });
-      // Renamed to cbProvider to prevent variable collision with injected wallets
-      const cbProvider = coinbaseWallet.makeWeb3Provider("https://sepolia.base.org", 84532);
-      const provider = new ethers.BrowserProvider(cbProvider);
-      
-      let userAddress, isConnected = false, isBusy = false;
+      let provider, signer, userAddress, isConnected = false, isBusy = false;
 
       async function sync() {
         if (isBusy) return;
         try {
-          const sw = new ethers.Contract(CONFIG.CONTRACT, CONFIG.ABI, provider);
+          // Fallback provider for reading data if no wallet is connected
+          const readProvider = isConnected ? provider : new ethers.JsonRpcProvider("https://sepolia.base.org");
+          const sw = new ethers.Contract(CONFIG.CONTRACT, CONFIG.ABI, readProvider);
           const [color, pool, actor, exp] = await Promise.all([
             sw.currentColor(), 
             sw.pot(), 
@@ -84,7 +78,7 @@
           ]);
           document.getElementById("jackpot-pool").innerText = `$${ethers.formatUnits(pool, 6)}`;
           updateUI(actor, color, Number(exp) * 1000);
-        } catch (e) { console.error("Sync Error:", e); }
+        } catch (e) { console.error("Syncing...", e); }
       }
 
       function updateUI(actor, color, expMs) {
@@ -94,18 +88,12 @@
         const layer = document.getElementById("color-layer");
 
         if (color === "VOID") { 
-          statusEl.innerText = "VOID"; 
-          world.classList.add("void-flash"); 
-          return; 
+          statusEl.innerText = "VOID"; world.classList.add("void-flash"); return; 
         }
 
         world.classList.remove("void-flash");
-
         if (now > expMs || actor === "0x0000000000000000000000000000000000000000") { 
-          world.classList.add("is-off"); 
-          statusEl.innerText = "OFF"; 
-          layer.style.opacity = "0"; 
-          return; 
+          world.classList.add("is-off"); statusEl.innerText = "OFF"; layer.style.opacity = "0"; return; 
         }
 
         world.classList.remove("is-off");
@@ -114,9 +102,8 @@
 
         const hex = color.replace('#','');
         const r = parseInt(hex.substr(0,2),16), g = parseInt(hex.substr(2,2),16), b = parseInt(hex.substr(4,2),16);
-        const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-        document.documentElement.style.setProperty("--text", brightness > 125 ? "#000" : "#fff");
-
+        const br = (r * 299 + g * 587 + b * 114) / 1000;
+        document.documentElement.style.setProperty("--text", br > 125 ? "#000" : "#fff");
         renderTimer(expMs);
       }
 
@@ -129,16 +116,22 @@
       }
 
       async function connect() {
+        if (!window.ethereum) {
+          alert("No wallet found. Please install MetaMask or another wallet.");
+          return;
+        }
         try {
-          const accts = await cbProvider.request({ method: "eth_requestAccounts" });
-          userAddress = accts[0]; 
+          provider = new ethers.BrowserProvider(window.ethereum);
+          const accts = await provider.send("eth_requestAccounts", []);
+          userAddress = accts[0];
+          signer = await provider.getSigner();
           isConnected = true;
           document.getElementById("wallet-status").innerText = "ACTIVE";
-          sync(); 
-        } catch (e) { console.error("Login failed", e); }
+          sync();
+        } catch (e) {
+          console.error("Connect failed", e);
+        }
       }
-
-      document.getElementById("identity-toggle").onclick = connect;
 
       document.getElementById("flicker").onclick = async () => {
         if (isBusy) return;
@@ -148,34 +141,32 @@
         document.body.classList.add("is-rolling");
         
         try {
-          const signer = await provider.getSigner();
           const usdc = new ethers.Contract(CONFIG.USDC, CONFIG.USDC_ABI, signer);
           const sw = new ethers.Contract(CONFIG.CONTRACT, CONFIG.ABI, signer);
           
           const allowance = await usdc.allowance(userAddress, CONFIG.CONTRACT);
-          
           if (allowance < 1000000n) {
             document.getElementById("status").innerText = "AUTH";
-            const approveTx = await usdc.approve(CONFIG.CONTRACT, ethers.MaxUint256);
-            await approveTx.wait();
+            const tx = await usdc.approve(CONFIG.CONTRACT, ethers.MaxUint256);
+            await tx.wait();
           }
 
           document.getElementById("status").innerText = "FLICK";
-          const tx = await sw.flick(); 
-          await tx.wait();
+          const flickTx = await sw.flick();
+          await flickTx.wait();
           
           isBusy = false; 
           document.body.classList.remove("is-rolling"); 
           sync();
         } catch (e) {
-          isBusy = false; 
-          document.body.classList.remove("is-rolling");
-          document.getElementById("status").innerText = "FAIL"; 
+          isBusy = false; document.body.classList.remove("is-rolling");
+          document.getElementById("status").innerText = "FAIL";
           setTimeout(sync, 2000);
         }
       };
 
-      setInterval(sync, 10000); 
+      document.getElementById("identity-toggle").onclick = connect;
+      setInterval(sync, 10000);
       window.onload = sync;
     </script>
   </body>
