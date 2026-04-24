@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>SWITCH</title>
+    <script>var exports = {};</script>
     <script src="https://unpkg.com/@coinbase/wallet-sdk@3.7.1/dist/index.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
     <style>
@@ -47,7 +48,7 @@
     </div>
     <script>
       const CONFIG = {
-        CONTRACT: "0xFF7E62c708da36206F0F0aba7B1A26e806b446A6",
+        CONTRACT: "0x01937f9eCf5ef892b98C75b0a6650890BBE132Ce",
         USDC: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
         ABI: [
           "function flick() external",
@@ -65,8 +66,10 @@
       };
 
       const coinbaseWallet = new CoinbaseWalletSDK({ appName: "SWITCH" });
-      const ethereum = coinbaseWallet.makeWeb3Provider("https://sepolia.base.org", 84532);
-      const provider = new ethers.BrowserProvider(ethereum);
+      // Renamed to cbProvider to prevent variable collision with injected wallets
+      const cbProvider = coinbaseWallet.makeWeb3Provider("https://sepolia.base.org", 84532);
+      const provider = new ethers.BrowserProvider(cbProvider);
+      
       let userAddress, isConnected = false, isBusy = false;
 
       async function sync() {
@@ -109,11 +112,8 @@
         document.documentElement.style.setProperty("--active-bg", color);
         layer.style.opacity = "1";
 
-        // Logic for text contrast (Black vs White)
         const hex = color.replace('#','');
-        const r = parseInt(hex.substr(0,2),16);
-        const g = parseInt(hex.substr(2,2),16);
-        const b = parseInt(hex.substr(4,2),16);
+        const r = parseInt(hex.substr(0,2),16), g = parseInt(hex.substr(2,2),16), b = parseInt(hex.substr(4,2),16);
         const brightness = (r * 299 + g * 587 + b * 114) / 1000;
         document.documentElement.style.setProperty("--text", brightness > 125 ? "#000" : "#fff");
 
@@ -122,29 +122,27 @@
 
       function renderTimer(expMs) {
         const diff = expMs - Date.now();
-        if (diff <= 0 || isBusy) { 
-          sync(); 
-          return; 
-        }
-        const m = Math.floor(diff / 60000);
-        const s = Math.floor((diff % 60000) / 1000);
+        if (diff <= 0 || isBusy) { sync(); return; }
+        const m = Math.floor(diff / 60000), s = Math.floor((diff % 60000) / 1000);
         document.getElementById("status").innerText = `${m}:${s < 10 ? "0" : ""}${s}`;
         requestAnimationFrame(() => renderTimer(expMs));
       }
 
+      async function connect() {
+        try {
+          const accts = await cbProvider.request({ method: "eth_requestAccounts" });
+          userAddress = accts[0]; 
+          isConnected = true;
+          document.getElementById("wallet-status").innerText = "ACTIVE";
+          sync(); 
+        } catch (e) { console.error("Login failed", e); }
+      }
+
+      document.getElementById("identity-toggle").onclick = connect;
+
       document.getElementById("flicker").onclick = async () => {
         if (isBusy) return;
-
-        if (!isConnected) {
-          try {
-            const accts = await ethereum.request({ method: "eth_requestAccounts" });
-            userAddress = accts[0]; 
-            isConnected = true;
-            document.getElementById("wallet-status").innerText = "ACTIVE";
-            sync(); 
-          } catch (e) { console.error("Login failed", e); }
-          return;
-        }
+        if (!isConnected) { await connect(); return; }
 
         isBusy = true; 
         document.body.classList.add("is-rolling");
@@ -177,7 +175,6 @@
         }
       };
 
-      // Poll every 10 seconds for global state updates
       setInterval(sync, 10000); 
       window.onload = sync;
     </script>
